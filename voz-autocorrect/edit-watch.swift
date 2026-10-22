@@ -40,7 +40,8 @@ while Date().timeIntervalSince(start) < seconds {
   } else {
     last = text
   }
-  sleep(1)
+  // Short interval so the last keystrokes before sending are still captured
+  usleep(300_000)
 }
 guard let last else { exit(1) }
 print(last, terminator: "")
