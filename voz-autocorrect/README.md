@@ -12,7 +12,9 @@ Rules replace whole words only. Unlike Voz's dictionary, they never bias the spe
 voz install voz-autocorrect
 ```
 
-Needs Apple Silicon. Learning reads the focused text field through macOS accessibility, which Voz already has. Without the [Claude Code](https://claude.com/claude-code) CLI, or with confirmation turned off, every repeated correction becomes a rule.
+Needs Apple Silicon. Learning reads the focused text field through macOS accessibility, which Voz already has.
+
+The confirmation step runs the [Claude Code](https://claude.com/claude-code) CLI on your Mac, signed in with your own Claude subscription or API key. Without it, or with confirmation turned off, every repeated correction that you rarely keep becomes a rule.
 
 ## Settings
 

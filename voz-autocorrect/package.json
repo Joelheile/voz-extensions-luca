@@ -1,10 +1,15 @@
 {
   "name": "voz-autocorrect",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Fixes words Voz keeps mishearing and learns new fixes from the corrections you make after dictating",
   "type": "module",
   "keywords": ["voz-package", "dictation", "autocorrect"],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucakammerer/voz-extensions.git",
+    "directory": "voz-autocorrect"
+  },
   "os": ["darwin"],
   "cpu": ["arm64"],
   "voz": { "apiVersion": 1 },
