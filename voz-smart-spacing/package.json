@@ -1,0 +1,13 @@
+{
+  "name": "voz-smart-spacing",
+  "version": "0.1.0",
+  "description": "Adds the missing space when you dictate right after existing text",
+  "type": "module",
+  "keywords": ["voz-package", "dictation", "spacing"],
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "voz": { "apiVersion": 1 },
+  "files": ["index.ts", "char-before-cursor", "char-before-cursor.swift"],
+  "devDependencies": { "@types/bun": "latest" }
+}

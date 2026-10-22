@@ -1,0 +1,13 @@
+{
+  "name": "voz-meeting",
+  "version": "0.1.0",
+  "description": "Record and transcribe meetings on your Mac with one hotkey: your microphone plus system audio, transcribed locally by Voz",
+  "type": "module",
+  "keywords": ["voz-package", "meeting", "transcription"],
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "voz": { "apiVersion": 1 },
+  "files": ["index.ts", "meeting-rec", "meeting-rec.swift"],
+  "devDependencies": { "@types/bun": "latest" }
+}

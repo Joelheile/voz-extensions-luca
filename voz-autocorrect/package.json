@@ -1,0 +1,13 @@
+{
+  "name": "voz-autocorrect",
+  "version": "0.1.0",
+  "description": "Fixes words Voz keeps mishearing and learns new fixes from the corrections you make after dictating",
+  "type": "module",
+  "keywords": ["voz-package", "dictation", "autocorrect"],
+  "license": "MIT",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "voz": { "apiVersion": 1 },
+  "files": ["index.ts", "edit-watch", "edit-watch.swift"],
+  "devDependencies": { "@types/bun": "latest" }
+}
