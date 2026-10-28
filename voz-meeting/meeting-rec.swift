@@ -1,5 +1,5 @@
 // Records the microphone and all system audio until SIGINT or SIGTERM, then mixes both into one 16 kHz mono m4a.
-// usage: meeting-rec <out.m4a>
+// usage: meeting-rec <out.m4a> | meeting-rec --mic-in-use
 import AVFoundation
 import CoreAudio
 
@@ -72,6 +72,12 @@ func mix(_ first: URL, _ second: URL, into output: URL) {
 }
 
 let arguments = CommandLine.arguments
+// `meeting-rec --mic-in-use` prints 1 while any app uses the default microphone
+if arguments.count == 2, arguments[1] == "--mic-in-use" {
+  let device = property(AudioObjectID(kAudioObjectSystemObject), kAudioHardwarePropertyDefaultInputDevice, AudioObjectID(kAudioObjectUnknown))
+  print(property(device, kAudioDevicePropertyDeviceIsRunningSomewhere, UInt32(0)) != 0 ? 1 : 0)
+  exit(0)
+}
 guard arguments.count == 2 else { fail("usage: meeting-rec <out.m4a>") }
 let output = URL(fileURLWithPath: arguments[1])
 let micURL = output.appendingPathExtension("mic.caf")

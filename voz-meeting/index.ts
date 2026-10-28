@@ -10,6 +10,22 @@ const vozDatabase = join(homedir(), "Library/Application Support/Voz/history.sql
 
 type Recording = { pid: number; name: string; audio: string };
 
+// Another app holding the microphone this long is most likely a call, not a short voice note
+const suggestAfter = 20_000;
+
+const osascript = (script: string) => Bun.spawn(["/usr/bin/osascript", "-e", script], { stdout: "pipe", stderr: "ignore" });
+const banner = (text: string) => osascript(`display notification ${JSON.stringify(text)} with title "Voz"`);
+
+async function micInUse() {
+  const run = Bun.spawn([recorder, "--mic-in-use"], { stdout: "pipe", stderr: "ignore" });
+  return (await new Response(run.stdout).text()).trim() === "1";
+}
+
+async function confirmRecording() {
+  const run = osascript('display dialog "A meeting seems to have started. Record it?" with title "Voz" buttons {"Not now", "Record"} default button "Record" cancel button "Not now" giving up after 60');
+  return (await new Response(run.stdout).text()).includes("button returned:Record");
+}
+
 const isRunning = (pid: number) => {
   try {
     process.kill(pid, 0);
@@ -36,11 +52,12 @@ export default defineExtension((voz) => {
     hotkey: { type: "string", title: "Hotkey", description: "Starts and stops a recording", default: "ctrl+opt+m" },
     folder: { type: "string", title: "Folder", description: "Where transcripts and recordings go", default: join(homedir(), "Documents/Voz Meetings") },
     clipboard: { type: "boolean", title: "Copy transcript to clipboard", default: true },
+    suggest: { type: "boolean", title: "Suggest recording meetings", description: "Asks to record when another app uses the microphone for a while", default: true },
   });
   // Kept on disk so a running recording survives extension reloads
   const statePath = join(voz.paths.data, "recording.json");
 
-  function start(ctx: Context) {
+  function start(notify: (text: string) => void) {
     mkdirSync(settings.folder, { recursive: true });
     const name = new Date().toLocaleString("sv-SE").slice(0, 16).replace(" ", "-").replace(":", "");
     const audio = join(settings.folder, `${name}.m4a`);
@@ -49,10 +66,10 @@ export default defineExtension((voz) => {
     return Bun.sleep(1000).then(async () => {
       if (child.exitCode !== null) {
         voz.log(`Recorder failed: ${await new Response(child.stderr).text()}`);
-        return ctx.notify("Meeting recording failed");
+        return notify("Meeting recording failed");
       }
       writeFileSync(statePath, JSON.stringify({ pid: child.pid, name, audio }));
-      ctx.notify("Recording meeting");
+      notify("Recording meeting");
     });
   }
 
@@ -92,6 +109,32 @@ export default defineExtension((voz) => {
     id: "meeting",
     name: "Record meeting",
     hotkey: settings.hotkey,
-    run: (ctx) => (existsSync(statePath) ? stop(ctx) : start(ctx)),
+    run: (ctx) => (existsSync(statePath) ? stop(ctx) : start(ctx.notify)),
   });
+
+  // Asks once per microphone session, so declining or stopping early does not ask again until the call ends
+  let busySince = 0;
+  let asked = false;
+  async function watchMicrophone() {
+    if (!settings.suggest) return;
+    if (existsSync(statePath)) {
+      asked = true;
+      return;
+    }
+    if (!(await micInUse())) {
+      busySince = 0;
+      asked = false;
+      return;
+    }
+    busySince ||= Date.now();
+    if (asked || Date.now() - busySince < suggestAfter) return;
+    asked = true;
+    if ((await confirmRecording()) && !existsSync(statePath)) await start(banner);
+  }
+  (async () => {
+    while (true) {
+      await Bun.sleep(5000);
+      await watchMicrophone().catch((error) => voz.log(`Meeting detection failed: ${error}`));
+    }
+  })();
 });
