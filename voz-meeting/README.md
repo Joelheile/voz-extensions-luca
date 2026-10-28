@@ -4,6 +4,8 @@ A [Voz](https://github.com/Joelheile/voz) extension that records meetings. Press
 
 When another app such as Zoom, Meet or Teams uses your microphone for 20 seconds, Voz asks whether to record the meeting. One click on **Record** starts it, the hotkey stops it.
 
+While a meeting records, the Voz menu bar icon shows a red dot and the Voz panel shows the time and a Stop button. Finished transcripts also appear in the Voz history, where you can search and copy them.
+
 Each meeting is saved as `YYYY-MM-DD-HHMM.md` and `.m4a` in `~/Documents/Voz Meetings`. Words from your Voz dictionary are boosted.
 
 ## Install
@@ -22,14 +24,6 @@ Change them on the Extensions page in Voz.
 - **Folder**: where transcripts and recordings go
 - **Copy transcript to clipboard**: on by default
 - **Suggest recording meetings**: on by default. Asks once per call, not again after you decline
-
-Other extensions can rewrite a transcript before it is saved:
-
-```ts
-voz.events.on<{ text: string }>("meeting:transcript", (transcript) => {
-  transcript.text = transcript.text.replaceAll("Cloud", "Claude");
-});
-```
 
 ## Notes
 

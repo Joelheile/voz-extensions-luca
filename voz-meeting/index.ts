@@ -8,7 +8,7 @@ const recorder = join(import.meta.dir, "meeting-rec");
 const vozBinary = "/Applications/voz.app/Contents/MacOS/voz";
 const vozDatabase = join(homedir(), "Library/Application Support/Voz/history.sqlite");
 
-type Recording = { pid: number; name: string; audio: string };
+type Recording = { pid: number; name: string; audio: string; started?: number };
 
 // Another app holding the microphone this long is most likely a call, not a short voice note
 const suggestAfter = 20_000;
@@ -52,6 +52,10 @@ export default defineExtension((voz) => {
   // Kept on disk so a running recording survives extension reloads
   const statePath = join(voz.paths.data, "recording.json");
 
+  // Older Voz versions have no activities or transcripts, so every call to them is optional
+  const showRecording = (recording: Recording) =>
+    voz.showActivity?.({ title: "Recording meeting", since: recording.started, stop: "meeting" });
+
   function start(notify: (text: string) => void) {
     mkdirSync(settings.folder, { recursive: true });
     const name = new Date().toLocaleString("sv-SE").slice(0, 16).replace(" ", "-").replace(":", "");
@@ -60,10 +64,12 @@ export default defineExtension((voz) => {
     child.unref();
     return Bun.sleep(1000).then(async () => {
       if (child.exitCode !== null) {
-        voz.log(`Recorder failed: ${await new Response(child.stderr).text()}`);
+        console.log(`Recorder failed: ${await new Response(child.stderr).text()}`);
         return notify("Meeting recording failed");
       }
-      writeFileSync(statePath, JSON.stringify({ pid: child.pid, name, audio }));
+      const recording = { pid: child.pid, name, audio, started: Date.now() };
+      writeFileSync(statePath, JSON.stringify(recording));
+      showRecording(recording);
       notify("Recording meeting");
     });
   }
@@ -73,15 +79,19 @@ export default defineExtension((voz) => {
     rmSync(statePath);
     if (isRunning(recording.pid)) process.kill(recording.pid, "SIGTERM");
     ctx.notify("Transcribing meeting …");
+    voz.showActivity?.({ title: "Transcribing meeting" });
+    // The handler is over by the time transcription ends, so the result goes to a macOS banner
     transcribe(recording)
-      .then((path) => ctx.notify(`${settings.clipboard ? "Copied and saved" : "Saved"} ${path.split("/").pop()}`))
+      .then((path) => banner(`${settings.clipboard ? "Copied and saved" : "Saved"} ${path.split("/").pop()}`))
       .catch((error) => {
-        voz.log(`Transcription failed: ${error}`);
-        ctx.notify("Transcription failed, the recording is in the meeting folder");
-      });
+        console.log(`Transcription failed: ${error}`);
+        banner("Transcription failed, the recording is in the meeting folder");
+      })
+      .finally(() => voz.hideActivity?.());
   }
 
   async function transcribe(recording: Recording) {
+    const stopped = Date.now();
     // The recorder mixes both tracks after it stops, which takes a few seconds for long meetings
     while (isRunning(recording.pid)) await Bun.sleep(250);
     if (!existsSync(recording.audio)) throw new Error("No recording");
@@ -90,13 +100,12 @@ export default defineExtension((voz) => {
     const run = Bun.spawn([vozBinary, "--transcribe", recording.audio, ...(words.length ? ["--vocab", words.join(",")] : [])], { stdout: "pipe", stderr: "pipe" });
     const output = await new Response(run.stdout).text();
     if ((await run.exited) !== 0) throw new Error(await new Response(run.stderr).text());
-    // Other extensions can rewrite the transcript by changing payload.text
-    const transcript = { text: output.split("\n").filter((line) => !/^engine .*, transcription [0-9.]+s$/.test(line)).join("\n").trim() };
-    voz.events.emit("meeting:transcript", transcript);
+    const text = output.split("\n").filter((line) => !/^engine .*, transcription [0-9.]+s$/.test(line)).join("\n").trim();
 
     const path = join(settings.folder, `${recording.name}.md`);
-    writeFileSync(path, `# Meeting ${recording.name}\n\n${transcript.text}\n`);
-    if (settings.clipboard) await Bun.spawn(["/usr/bin/pbcopy"], { stdin: new Blob([transcript.text]), env: { LANG: "en_US.UTF-8" } }).exited;
+    writeFileSync(path, `# Meeting ${recording.name}\n\n${text}\n`);
+    if (text) voz.addTranscript?.({ text, seconds: recording.started && (stopped - recording.started) / 1000 });
+    if (settings.clipboard) await Bun.spawn(["/usr/bin/pbcopy"], { stdin: new Blob([text]), env: { LANG: "en_US.UTF-8" } }).exited;
     return path;
   }
 
@@ -106,6 +115,8 @@ export default defineExtension((voz) => {
     hotkey: settings.hotkey,
     run: (ctx) => (existsSync(statePath) ? stop(ctx) : start(ctx.notify)),
   });
+  // Voz ends activities when it reloads extensions, the recording keeps running
+  if (existsSync(statePath)) showRecording(JSON.parse(readFileSync(statePath, "utf8")));
 
   // Asks once each time the microphone becomes busy, so declining or stopping early does not ask again until the call ends
   let busy = false;
@@ -121,9 +132,9 @@ export default defineExtension((voz) => {
       if (next === busy) continue;
       busy = next;
       clearTimeout(timer);
-      if (busy) timer = setTimeout(() => suggest().catch((error) => voz.log(`Meeting suggestion failed: ${error}`)), suggestAfter);
+      if (busy) timer = setTimeout(() => suggest().catch((error) => console.log(`Meeting suggestion failed: ${error}`)), suggestAfter);
     }
-    voz.log(`Meeting detection stopped: ${await new Response(watcher.stderr).text()}`);
+    console.log(`Meeting detection stopped: ${await new Response(watcher.stderr).text()}`);
   }
-  if (settings.suggest) watchMicrophone().catch((error) => voz.log(`Meeting detection failed: ${error}`));
+  if (settings.suggest) watchMicrophone().catch((error) => console.log(`Meeting detection failed: ${error}`));
 });
