@@ -16,11 +16,6 @@ const suggestAfter = 20_000;
 const osascript = (script: string) => Bun.spawn(["/usr/bin/osascript", "-e", script], { stdout: "pipe", stderr: "ignore" });
 const banner = (text: string) => osascript(`display notification ${JSON.stringify(text)} with title "Voz"`);
 
-async function micInUse() {
-  const run = Bun.spawn([recorder, "--mic-in-use"], { stdout: "pipe", stderr: "ignore" });
-  return (await new Response(run.stdout).text()).trim() === "1";
-}
-
 async function confirmRecording() {
   const run = osascript('display dialog "A meeting seems to have started. Record it?" with title "Voz" buttons {"Not now", "Record"} default button "Record" cancel button "Not now" giving up after 60');
   return (await new Response(run.stdout).text()).includes("button returned:Record");
@@ -112,29 +107,23 @@ export default defineExtension((voz) => {
     run: (ctx) => (existsSync(statePath) ? stop(ctx) : start(ctx.notify)),
   });
 
-  // Asks once per microphone session, so declining or stopping early does not ask again until the call ends
-  let busySince = 0;
-  let asked = false;
-  async function watchMicrophone() {
-    if (!settings.suggest) return;
-    if (existsSync(statePath)) {
-      asked = true;
-      return;
-    }
-    if (!(await micInUse())) {
-      busySince = 0;
-      asked = false;
-      return;
-    }
-    busySince ||= Date.now();
-    if (asked || Date.now() - busySince < suggestAfter) return;
-    asked = true;
-    if ((await confirmRecording()) && !existsSync(statePath)) await start(banner);
+  // Asks once each time the microphone becomes busy, so declining or stopping early does not ask again until the call ends
+  let busy = false;
+  let timer: Timer | undefined;
+  async function suggest() {
+    if (existsSync(statePath)) return;
+    if ((await confirmRecording()) && busy && !existsSync(statePath)) await start(banner);
   }
-  (async () => {
-    while (true) {
-      await Bun.sleep(5000);
-      await watchMicrophone().catch((error) => voz.log(`Meeting detection failed: ${error}`));
+  async function watchMicrophone() {
+    const watcher = Bun.spawn([recorder, "--watch"], { stdin: "pipe", stdout: "pipe", stderr: "pipe" });
+    for await (const chunk of watcher.stdout.pipeThrough(new TextDecoderStream())) {
+      const next = chunk.trim().endsWith("1");
+      if (next === busy) continue;
+      busy = next;
+      clearTimeout(timer);
+      if (busy) timer = setTimeout(() => suggest().catch((error) => voz.log(`Meeting suggestion failed: ${error}`)), suggestAfter);
     }
-  })();
+    voz.log(`Meeting detection stopped: ${await new Response(watcher.stderr).text()}`);
+  }
+  if (settings.suggest) watchMicrophone().catch((error) => voz.log(`Meeting detection failed: ${error}`));
 });
