@@ -1,6 +1,6 @@
 # voz-meeting
 
-A [Voz](https://github.com/Joelheile/voz) extension that records meetings. Press the hotkey to start, press it again to stop. Voz transcribes your microphone and everything your Mac plays, such as Zoom, Meet or Teams, on your Mac and copies the transcript to the clipboard.
+A [Voz](https://github.com/Joelheile/voz) extension that records meetings. Press the hotkey to start, press it again to stop. Voz transcribes your microphone and everything your Mac plays, such as Zoom, Meet or Teams, on your Mac, saves the transcript to your Voz history and copies it to the clipboard.
 
 When another app such as Zoom, Meet or Teams uses your microphone for 20 seconds, Voz asks whether to record the meeting. One click on **Record** starts it, the hotkey stops it.
 

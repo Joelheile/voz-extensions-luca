@@ -88,9 +88,11 @@ export default defineExtension((voz) => {
     while (isRunning(recording.pid)) await Bun.sleep(250);
     if (!existsSync(recording.audio)) throw new Error("No recording");
 
-    const text = markdown(await ctx.transcribe(recording.audio, { speakers: true }));
+    const transcript = await ctx.transcribe(recording.audio, { speakers: true });
+    const text = markdown(transcript);
     const path = join(settings.folder, `${recording.name}.md`);
     writeFileSync(path, text);
+    voz.addHistory({ text, seconds: transcript.seconds, file: path });
     if (settings.clipboard) await Bun.spawn(["/usr/bin/pbcopy"], { stdin: new Blob([text]), env: { LANG: "en_US.UTF-8" } }).exited;
     return path;
   }
