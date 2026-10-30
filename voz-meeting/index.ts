@@ -1,14 +1,11 @@
-import { defineExtension, type Context } from "voz";
-import { Database } from "bun:sqlite";
+import { defineExtension, type Context, type Transcript } from "voz";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const recorder = join(import.meta.dir, "meeting-rec");
-const vozBinary = "/Applications/voz.app/Contents/MacOS/voz";
-const vozDatabase = join(homedir(), "Library/Application Support/Voz/history.sqlite");
 
-type Recording = { pid: number; name: string; audio: string; started?: number };
+type Recording = { pid: number; name: string; audio: string };
 
 // Another app holding the microphone this long is most likely a call, not a short voice note
 const suggestAfter = 20_000;
@@ -30,16 +27,15 @@ const isRunning = (pid: number) => {
   }
 };
 
-// Voz keeps its dictionary in its history database; boost those words in meetings too
-function vocabulary(): string[] {
-  try {
-    const database = new Database(vozDatabase, { readonly: true });
-    const words = database.query("select word from vocabulary").all().map((row: any) => String(row.word));
-    database.close();
-    return words;
-  } catch {
-    return [];
-  }
+// Same format as voz-transcribe-file
+function markdown(transcript: Transcript) {
+  if (transcript.speakers < 2) return `${transcript.text.trim()}\n`;
+  return `${transcript.turns.map((turn) => `**[${timestamp(turn.start)}] Speaker ${turn.speaker}:** ${turn.text}`).join("\n\n")}\n`;
+}
+
+function timestamp(seconds: number) {
+  const whole = Math.floor(seconds);
+  return [whole / 3600, (whole % 3600) / 60, whole % 60].map((part) => String(Math.floor(part)).padStart(2, "0")).join(":");
 }
 
 export default defineExtension((voz) => {
@@ -52,10 +48,6 @@ export default defineExtension((voz) => {
   // Kept on disk so a running recording survives extension reloads
   const statePath = join(voz.paths.data, "recording.json");
 
-  // Older Voz versions have no activities or transcripts, so every call to them is optional
-  const showRecording = (recording: Recording) =>
-    voz.showActivity?.({ title: "Recording meeting", since: recording.started, stop: "meeting" });
-
   function start(notify: (text: string) => void) {
     mkdirSync(settings.folder, { recursive: true });
     const name = new Date().toLocaleString("sv-SE").slice(0, 16).replace(" ", "-").replace(":", "");
@@ -67,9 +59,9 @@ export default defineExtension((voz) => {
         console.log(`Recorder failed: ${await new Response(child.stderr).text()}`);
         return notify("Meeting recording failed");
       }
-      const recording = { pid: child.pid, name, audio, started: Date.now() };
+      const recording = { pid: child.pid, name, audio };
       writeFileSync(statePath, JSON.stringify(recording));
-      showRecording(recording);
+      button.rename("Stop meeting");
       notify("Recording meeting");
     });
   }
@@ -78,45 +70,33 @@ export default defineExtension((voz) => {
     const recording: Recording = JSON.parse(readFileSync(statePath, "utf8"));
     rmSync(statePath);
     if (isRunning(recording.pid)) process.kill(recording.pid, "SIGTERM");
-    ctx.notify("Transcribing meeting …");
-    voz.showActivity?.({ title: "Transcribing meeting" });
-    // The handler is over by the time transcription ends, so the result goes to a macOS banner
-    transcribe(recording)
-      .then((path) => banner(`${settings.clipboard ? "Copied and saved" : "Saved"} ${path.split("/").pop()}`))
-      .catch((error) => {
-        console.log(`Transcription failed: ${error}`);
-        banner("Transcription failed, the recording is in the meeting folder");
-      })
-      .finally(() => voz.hideActivity?.());
+    button.rename("Record meeting");
+    try {
+      ctx.notify(`${settings.clipboard ? "Copied and saved" : "Saved"} ${(await transcribe(recording, ctx)).split("/").pop()}`);
+    } catch (error) {
+      console.log(`Transcription failed: ${error}`);
+      ctx.notify("Transcription failed, the recording is in the meeting folder");
+    }
   }
 
-  async function transcribe(recording: Recording) {
-    const stopped = Date.now();
+  async function transcribe(recording: Recording, ctx: Context) {
     // The recorder mixes both tracks after it stops, which takes a few seconds for long meetings
     while (isRunning(recording.pid)) await Bun.sleep(250);
     if (!existsSync(recording.audio)) throw new Error("No recording");
 
-    const words = vocabulary();
-    const run = Bun.spawn([vozBinary, "--transcribe", recording.audio, ...(words.length ? ["--vocab", words.join(",")] : [])], { stdout: "pipe", stderr: "pipe" });
-    const output = await new Response(run.stdout).text();
-    if ((await run.exited) !== 0) throw new Error(await new Response(run.stderr).text());
-    const text = output.split("\n").filter((line) => !/^engine .*, transcription [0-9.]+s$/.test(line)).join("\n").trim();
-
+    const text = markdown(await ctx.transcribe(recording.audio, { speakers: true }));
     const path = join(settings.folder, `${recording.name}.md`);
-    writeFileSync(path, `# Meeting ${recording.name}\n\n${text}\n`);
-    if (text) voz.addTranscript?.({ text, seconds: recording.started && (stopped - recording.started) / 1000 });
+    writeFileSync(path, text);
     if (settings.clipboard) await Bun.spawn(["/usr/bin/pbcopy"], { stdin: new Blob([text]), env: { LANG: "en_US.UTF-8" } }).exited;
     return path;
   }
 
-  voz.registerAction({
+  const button = voz.registerAction({
     id: "meeting",
-    name: "Record meeting",
+    name: existsSync(statePath) ? "Stop meeting" : "Record meeting",
     hotkey: settings.hotkey,
     run: (ctx) => (existsSync(statePath) ? stop(ctx) : start(ctx.notify)),
   });
-  // Voz ends activities when it reloads extensions, the recording keeps running
-  if (existsSync(statePath)) showRecording(JSON.parse(readFileSync(statePath, "utf8")));
 
   // Asks once each time the microphone becomes busy, so declining or stopping early does not ask again until the call ends
   let busy = false;
