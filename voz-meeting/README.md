@@ -4,7 +4,7 @@ A [Voz](https://github.com/Joelheile/voz) extension that records meetings. Press
 
 When another app such as Zoom, Meet or Teams uses your microphone for 20 seconds, Voz asks whether to record the meeting. One click on **Record** starts it, the hotkey stops it.
 
-While a meeting records, the button in the Voz panel says **Stop meeting**. While Voz transcribes, the notch shows it.
+While a meeting records, the Voz menu bar icon shows a dot, and the Voz panel shows the time and a Stop button. While Voz transcribes, the notch shows it.
 
 Each meeting is saved as `YYYY-MM-DD-HHMM.md` and `.m4a` in `~/Documents/Voz Meetings`. Voz fixes words from your dictionary. With more than one speaker, the transcript splits into turns, like voz-transcribe-file:
 

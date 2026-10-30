@@ -92,9 +92,13 @@ export type Action = {
   run(ctx: Context): Awaitable<void>;
 };
 
-export type ActionButton = {
-  rename(name: string): void;
+export type Activity = {
+  title: string;
+  since?: number;
+  stop?(ctx: Context): Awaitable<void>;
 };
+
+export type RunningActivity = { end(): void };
 
 type SettingBase = { title: string; description?: string };
 
@@ -148,7 +152,8 @@ export type ExtensionAPI = {
   registerSpeechModel(model: SpeechModel): void;
   registerCleanupModel(model: CleanupModel): void;
   registerCleanupStep(step: CleanupStep): void;
-  registerAction(action: Action): ActionButton;
+  registerAction(action: Action): void;
+  startActivity(activity: Activity): RunningActivity;
   settings<Schema extends SettingsSchema>(schema: Schema): SettingsValues<Schema>;
 };
 

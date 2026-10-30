@@ -1,11 +1,11 @@
-import { defineExtension, type Context, type Transcript } from "voz";
+import { defineExtension, type Context, type RunningActivity, type Transcript } from "voz";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const recorder = join(import.meta.dir, "meeting-rec");
 
-type Recording = { pid: number; name: string; audio: string };
+type Recording = { pid: number; name: string; audio: string; started: number };
 
 // Another app holding the microphone this long is most likely a call, not a short voice note
 const suggestAfter = 20_000;
@@ -47,6 +47,10 @@ export default defineExtension((voz) => {
   });
   // Kept on disk so a running recording survives extension reloads
   const statePath = join(voz.paths.data, "recording.json");
+  let activity: RunningActivity | undefined;
+  const showRecording = (recording: Recording) => {
+    activity = voz.startActivity({ title: "Recording meeting", since: recording.started, stop });
+  };
 
   function start(notify: (text: string) => void) {
     mkdirSync(settings.folder, { recursive: true });
@@ -59,9 +63,9 @@ export default defineExtension((voz) => {
         console.log(`Recorder failed: ${await new Response(child.stderr).text()}`);
         return notify("Meeting recording failed");
       }
-      const recording = { pid: child.pid, name, audio };
+      const recording = { pid: child.pid, name, audio, started: Date.now() };
       writeFileSync(statePath, JSON.stringify(recording));
-      button.rename("Stop meeting");
+      showRecording(recording);
       notify("Recording meeting");
     });
   }
@@ -70,7 +74,7 @@ export default defineExtension((voz) => {
     const recording: Recording = JSON.parse(readFileSync(statePath, "utf8"));
     rmSync(statePath);
     if (isRunning(recording.pid)) process.kill(recording.pid, "SIGTERM");
-    button.rename("Record meeting");
+    activity?.end();
     try {
       ctx.notify(`${settings.clipboard ? "Copied and saved" : "Saved"} ${(await transcribe(recording, ctx)).split("/").pop()}`);
     } catch (error) {
@@ -91,12 +95,14 @@ export default defineExtension((voz) => {
     return path;
   }
 
-  const button = voz.registerAction({
+  voz.registerAction({
     id: "meeting",
-    name: existsSync(statePath) ? "Stop meeting" : "Record meeting",
+    name: "Record meeting",
     hotkey: settings.hotkey,
     run: (ctx) => (existsSync(statePath) ? stop(ctx) : start(ctx.notify)),
   });
+  // Voz ends activities when it reloads extensions, the recording keeps running
+  if (existsSync(statePath)) showRecording(JSON.parse(readFileSync(statePath, "utf8")));
 
   // Asks once each time the microphone becomes busy, so declining or stopping early does not ask again until the call ends
   let busy = false;
