@@ -1,0 +1,17 @@
+{
+  "name": "voz-recap",
+  "version": "0.1.0",
+  "description": "Start, stop and follow Recap meeting recordings from Voz",
+  "type": "module",
+  "keywords": ["voz-package", "meetings", "recap"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lucakammerer/voz-extensions.git",
+    "directory": "voz-recap"
+  },
+  "os": ["darwin"],
+  "voz": { "apiVersion": 5, "icon": "notebook-pen" },
+  "files": ["index.ts"],
+  "devDependencies": { "@types/bun": "latest" }
+}
