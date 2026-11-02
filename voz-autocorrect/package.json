@@ -1,6 +1,6 @@
 {
   "name": "voz-autocorrect",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Fixes words Voz keeps mishearing and learns new fixes from the corrections you make after dictating",
   "type": "module",
   "keywords": ["voz-package", "dictation", "autocorrect"],
