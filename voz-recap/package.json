@@ -11,7 +11,7 @@
     "directory": "voz-recap"
   },
   "os": ["darwin"],
-  "voz": { "apiVersion": 5, "icon": "notebook-pen" },
+  "voz": { "apiVersion": 4, "icon": "notebook-pen" },
   "files": ["index.ts"],
   "devDependencies": { "@types/bun": "latest" }
 }

@@ -17,7 +17,7 @@ export type Environment = {
 };
 
 const apps = ["Recap", "RecapDevA"];
-const missing = "Recap ist nicht installiert";
+const missing = "Recap is not installed";
 
 const defaults: Environment = {
   applications: "/Applications",
@@ -42,11 +42,11 @@ const isRunning = (pid: number) => {
 export function recap(env: Environment = defaults) {
   return (voz: ExtensionAPI) => {
     const settings = voz.settings({
-      app: { type: "string", title: "App", description: "Welche Recap-Installation Voz steuert", default: "Automatisch", options: ["Automatisch", ...apps] },
-      hotkey: { type: "string", title: "Hotkey", description: "Startet und stoppt ein Meeting, z. B. ctrl+opt+m", default: "" },
+      app: { type: "string", title: "App", description: "Which Recap Voz controls", default: "Automatic", options: ["Automatic", ...apps] },
+      hotkey: { type: "string", title: "Hotkey", description: "Starts and stops a meeting, such as ctrl+opt+m", default: "" },
     });
 
-    const name = settings.app === "Automatisch" ? apps.find((app) => existsSync(join(env.applications, `${app}.app`))) : settings.app;
+    const name = settings.app === "Automatic" ? apps.find((app) => existsSync(join(env.applications, `${app}.app`))) : settings.app;
     const installed = name !== undefined && existsSync(join(env.applications, `${name}.app`));
     const scheme = name?.toLowerCase();
     const supportDir = join(env.home, "Library/Application Support", name ?? "Recap");
@@ -63,17 +63,13 @@ export function recap(env: Environment = defaults) {
 
     async function send(path: string, notify: (text: string) => void) {
       if (!installed) return notify(missing);
-      if (!(await env.open(`${scheme}://${path}`))) return notify("Recap reagiert nicht");
-      for (let i = 0; i < 20 && !watcher; i++) {
-        watchState();
-        if (!watcher) await Bun.sleep(250);
-      }
+      if (!(await env.open(`${scheme}://${path}`))) notify("Recap did not respond");
     }
 
-    const start = voz.registerAction({ id: "start", name: "Meeting aufnehmen", run: (ctx) => send("record/start", ctx.notify) });
-    const stop = voz.registerAction({ id: "stop", name: "Meeting stoppen", hidden: true, run: (ctx) => send("record/stop", ctx.notify) });
+    const start = voz.registerAction({ id: "start", name: "Record meeting", run: (ctx) => send("record/start", ctx.notify) });
+    const stop = voz.registerAction({ id: "stop", name: "Stop meeting", hidden: true, run: (ctx) => send("record/stop", ctx.notify) });
     if (settings.hotkey) {
-      voz.registerAction({ id: "toggle", name: "Meeting starten oder stoppen", hotkey: settings.hotkey, hidden: true, run: (ctx) => send("record/toggle", ctx.notify) });
+      voz.registerAction({ id: "toggle", name: "Record or stop meeting", hotkey: settings.hotkey, hidden: true, run: (ctx) => send("record/toggle", ctx.notify) });
     }
     for (const phrase of ["meeting starten", "start meeting"]) voz.registerCommand({ phrase, run: (_, ctx) => send("record/start", ctx.notify) });
     for (const phrase of ["meeting stoppen", "meeting beenden", "stop meeting"]) voz.registerCommand({ phrase, run: (_, ctx) => send("record/stop", ctx.notify) });
@@ -140,6 +136,11 @@ export function recap(env: Environment = defaults) {
     }
 
     watchState();
+    // Recap may create its folder only on first launch, and a crashed Recap leaves its recording in state.json.
+    setInterval(() => {
+      watchState();
+      showRecording();
+    }, 5000);
   };
 }
 

@@ -52,10 +52,8 @@ export type Context = TransformContext & {
 };
 
 
-/** `light` keeps every spoken word except obvious fillers. `heavy` also runs the cleanup model. */
-export type CleanupMode = "light" | "heavy";
-export type BeforeCleanupEvent = { prompt: string; mode: CleanupMode };
-export type BeforeCleanupResult = { prompt?: string; mode?: CleanupMode } | void;
+export type BeforeCleanupEvent = { prompt: string };
+export type BeforeCleanupResult = { prompt: string } | void;
 export type BeforeInsertEvent = { text: string; raw: string };
 export type BeforeInsertResult = { text: string } | void;
 export type CommandEvent = { text: string };
@@ -171,6 +169,6 @@ export type ExtensionAPI = {
 
 export type Extension = (voz: ExtensionAPI) => Awaitable<void>;
 
-export const apiVersion: 5;
+export const apiVersion: 4;
 
 export function defineExtension(extension: Extension): Extension;

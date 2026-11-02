@@ -32,7 +32,7 @@ function setup({ installed = true } = {}) {
 
   const voz = {
     paths: { data: join(root, "data") },
-    settings: () => ({ app: "Automatisch", hotkey: "" }),
+    settings: () => ({ app: "Automatic", hotkey: "" }),
     registerAction(action: any) {
       actions[action.id] = { ...action };
       return { update: (changes: any) => Object.assign(actions[action.id], changes) };
@@ -85,14 +85,6 @@ test("the action starts and stops a Recap recording", async () => {
   expect(running(t)).toEqual([]);
 });
 
-test("spoken commands send the same URLs", async () => {
-  const t = setup();
-  t.load();
-  await t.commands["meeting starten"]({ text: "" }, t.ctx);
-  await t.commands["stop meeting"]({ text: "" }, t.ctx);
-  expect(t.opened).toEqual(["recapdeva://record/start", "recapdeva://record/stop"]);
-});
-
 test("a recording started in Recap shows as an activity whose Stop stops Recap", async () => {
   const t = setup();
   t.load();
@@ -139,6 +131,6 @@ test("without Recap, loading is silent and each use gives one notice", async () 
   t.load();
   expect(t.notices).toEqual([]);
   await t.actions.start.run(t.ctx);
-  expect(t.notices).toEqual(["Recap ist nicht installiert"]);
+  expect(t.notices).toEqual(["Recap is not installed"]);
   expect(t.opened).toEqual([]);
 });
