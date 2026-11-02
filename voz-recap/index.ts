@@ -1,11 +1,11 @@
-import { defineExtension, type Context, type ExtensionAPI, type RunningActivity } from "voz";
+import { defineExtension, type ExtensionAPI, type RunningActivity } from "voz";
 import { existsSync, mkdirSync, readFileSync, watch, writeFileSync, type FSWatcher } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 type RecapState = {
   pid: number;
-  recording?: { meetingId?: number; title: string; since: string };
+  recording?: { title: string; since: string };
   lastNotes?: { meetingId: number; title: string; seconds: number; readyAt: string };
 };
 
@@ -16,17 +16,13 @@ export type Environment = {
   notes(cli: string, supportDir: string, meetingId: number): Promise<string>;
 };
 
-const apps = ["Recap", "RecapDevA"];
-const missing = "Recap is not installed";
-
 const defaults: Environment = {
   applications: "/Applications",
   home: homedir(),
   open: async (url) => (await Bun.spawn(["/usr/bin/open", "-g", url], { stdout: "ignore", stderr: "ignore" }).exited) === 0,
   async notes(cli, supportDir, meetingId) {
     const child = Bun.spawn([cli, "meetings", "get", String(meetingId), "--support-dir", supportDir], { stdout: "pipe", stderr: "ignore" });
-    const output = JSON.parse(await new Response(child.stdout).text());
-    return output.data?.formattedNotes ?? "";
+    return JSON.parse(await new Response(child.stdout).text()).data?.formattedNotes ?? "";
   },
 };
 
@@ -42,12 +38,10 @@ const isRunning = (pid: number) => {
 export function recap(env: Environment = defaults) {
   return (voz: ExtensionAPI) => {
     const settings = voz.settings({
-      app: { type: "string", title: "App", description: "Which Recap Voz controls", default: "Automatic", options: ["Automatic", ...apps] },
       hotkey: { type: "string", title: "Hotkey", description: "Starts and stops a meeting, such as ctrl+opt+m", default: "" },
     });
 
-    const name = settings.app === "Automatic" ? apps.find((app) => existsSync(join(env.applications, `${app}.app`))) : settings.app;
-    const installed = name !== undefined && existsSync(join(env.applications, `${name}.app`));
+    const name = ["Recap", "RecapDevA"].find((app) => existsSync(join(env.applications, `${app}.app`)));
     const scheme = name?.toLowerCase();
     const supportDir = join(env.home, "Library/Application Support", name ?? "Recap");
     const statePath = join(supportDir, "state.json");
@@ -57,12 +51,9 @@ export function recap(env: Environment = defaults) {
     let activity: RunningActivity | undefined;
     let activityKey = "";
     let watcher: FSWatcher | undefined;
-    let lastRaw: string | undefined;
-
-    const recording = () => (state && isRunning(state.pid) ? state.recording : undefined);
 
     async function send(path: string, notify: (text: string) => void) {
-      if (!installed) return notify(missing);
+      if (!name) return notify("Recap is not installed");
       if (!(await env.open(`${scheme}://${path}`))) notify("Recap did not respond");
     }
 
@@ -75,68 +66,52 @@ export function recap(env: Environment = defaults) {
     for (const phrase of ["meeting stoppen", "meeting beenden", "stop meeting"]) voz.registerCommand({ phrase, run: (_, ctx) => send("record/stop", ctx.notify) });
 
     function showRecording() {
-      const current = recording();
+      const current = state && isRunning(state.pid) ? state.recording : undefined;
       const key = current ? `${current.since}|${current.title}` : "";
       if (key === activityKey) return;
-      activity?.end();
-      activity = undefined;
       activityKey = key;
+      activity?.end();
+      activity = current && voz.startActivity({ title: `Meeting · ${current.title}`, since: Date.parse(current.since), stop: (ctx) => send("record/stop", ctx.notify) });
       start.update({ hidden: !!current });
       stop.update({ hidden: !current });
-      if (!current) return;
-      activity = voz.startActivity({
-        title: `Meeting · ${current.title}`,
-        since: Date.parse(current.since),
-        stop: (ctx: Context) => send("record/stop", ctx.notify),
-      });
     }
 
     async function addNotes() {
       const notes = state?.lastNotes;
       const key = notes ? `${notes.meetingId}|${notes.readyAt}` : "";
-      const seen = existsSync(seenPath) ? readFileSync(seenPath, "utf8") : undefined;
-      if (seen === key) return;
+      const firstLoad = !existsSync(seenPath);
+      if (!firstLoad && readFileSync(seenPath, "utf8") === key) return;
       mkdirSync(voz.paths.data, { recursive: true });
       writeFileSync(seenPath, key);
-      // On the first load, older notes are already done; only new ones belong in the history.
-      if (!notes || seen === undefined) return;
-      const cli = join(env.applications, `${name}.app/Contents/MacOS/recap`);
-      const body = await env.notes(cli, supportDir, notes.meetingId).catch((error) => {
+      if (!notes || firstLoad) return;
+      const body = await env.notes(join(env.applications, `${name}.app/Contents/MacOS/recap`), supportDir, notes.meetingId).catch((error) => {
         console.log(`Reading notes failed: ${error}`);
         return "";
       });
-      const link = `${scheme}://meeting/${notes.meetingId}`;
-      voz.addHistory({ text: [notes.title, body.trim(), link].filter(Boolean).join("\n\n"), seconds: notes.seconds });
+      voz.addHistory({ text: [notes.title, body.trim(), `${scheme}://meeting/${notes.meetingId}`].filter(Boolean).join("\n\n"), seconds: notes.seconds });
     }
 
     function readState() {
-      let raw = "";
       try {
-        raw = readFileSync(statePath, "utf8");
-      } catch {}
-      if (raw === lastRaw) return;
-      lastRaw = raw;
-      try {
-        state = raw ? JSON.parse(raw) : undefined;
+        state = JSON.parse(readFileSync(statePath, "utf8"));
       } catch {
-        return;
+        state = undefined;
       }
       showRecording();
       addNotes().catch((error) => console.log(`Adding notes failed: ${error}`));
     }
 
     function watchState() {
-      if (watcher || !installed || !existsSync(supportDir)) return;
+      if (watcher || !name || !existsSync(supportDir)) return;
       watcher = watch(supportDir, (_, file) => {
         if (!file || file === "state.json") readState();
       });
       readState();
-      // FSEvents needs a moment to start; a write in that window raises no event.
+      // FSEvents drops writes in its first few hundred milliseconds.
       setTimeout(readState, 500);
     }
 
     watchState();
-    // Recap may create its folder only on first launch, and a crashed Recap leaves its recording in state.json.
     setInterval(() => {
       watchState();
       showRecording();

@@ -17,7 +17,6 @@ function setup({ installed = true } = {}) {
   mkdirSync(support, { recursive: true });
   if (installed) mkdirSync(join(applications, "RecapDevA.app"), { recursive: true });
 
-  // Atomic like Recap's own write, so the watcher never reads a half-written file.
   const writeState = (state: object) => {
     writeFileSync(join(support, "state.tmp"), JSON.stringify({ pid: process.pid, ...state }));
     renameSync(join(support, "state.tmp"), join(support, "state.json"));
@@ -32,7 +31,7 @@ function setup({ installed = true } = {}) {
 
   const voz = {
     paths: { data: join(root, "data") },
-    settings: () => ({ app: "Automatic", hotkey: "" }),
+    settings: () => ({ hotkey: "" }),
     registerAction(action: any) {
       actions[action.id] = { ...action };
       return { update: (changes: any) => Object.assign(actions[action.id], changes) };
@@ -46,7 +45,6 @@ function setup({ installed = true } = {}) {
     addHistory: (entry: any) => history.push(entry),
   };
 
-  // A fake Recap: answers record URLs by writing state.json like the app does.
   const open = async (url: string) => {
     opened.push(url);
     if (url.endsWith("record/start")) writeState({ recording: { meetingId: 3, title: "Meeting", since: "2026-10-31T10:00:00Z" } });
@@ -58,7 +56,6 @@ function setup({ installed = true } = {}) {
   return { load, writeState, opened, activities, actions, commands, history, notices, ctx };
 }
 
-// fs.watch delivers through FSEvents, which can take a few hundred milliseconds.
 async function until(condition: () => boolean) {
   for (let i = 0; i < 40 && !condition(); i++) await Bun.sleep(50);
   expect(condition()).toBe(true);

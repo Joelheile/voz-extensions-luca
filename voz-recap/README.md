@@ -17,5 +17,4 @@ voz install ./voz-recap
 
 ## Settings
 
-- **App**: which Recap to control. Automatic picks `/Applications/Recap.app`, else the dev build `RecapDevA.app`
 - **Hotkey**: starts and stops a meeting, such as `ctrl+opt+m`. Empty means none
