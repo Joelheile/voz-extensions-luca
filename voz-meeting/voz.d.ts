@@ -203,6 +203,9 @@ export type Activity = {
   stop?(ctx: Context): Awaitable<void>;
   /** Runs when the user clicks the activity in the notch or the Voz panel. */
   open?(ctx: Context): Awaitable<void>;
+  /** With `resume`, Voz shows Pause next to Stop. Live transcription for the activity stops hearing until `resume`, and the timer stands still. Pause anything else you record here. API 8. */
+  pause?(ctx: Context): Awaitable<void>;
+  resume?(ctx: Context): Awaitable<void>;
 };
 
 export type RunningActivity = {
@@ -213,7 +216,12 @@ export type RunningActivity = {
 
 /** Another part of an entry the user can copy on its own, such as a meeting's notes. */
 export type HistoryCopy = { name: string; text: string };
-export type HistoryEntry = { text: string; seconds?: number; file?: string; copies?: HistoryCopy[] };
+export type HistoryEntry = {
+  text: string;
+  seconds?: number;
+  file?: string;
+  copies?: HistoryCopy[];
+};
 
 type SettingBase = { title: string; description?: string };
 
@@ -274,6 +282,8 @@ export type ExtensionAPI = {
   registerAction(action: Action): ActionHandle;
   registerTool<const S extends ObjectSchema>(tool: Tool<S>): void;
   startActivity(activity: Activity): RunningActivity;
+  /** Like `ctx.ask`, for moments no handler runs, such as when a meeting starts */
+  ask(options: AskOptions): Promise<Answer>;
   addHistory(entry: HistoryEntry): void;
   settings<Schema extends SettingsSchema>(
     schema: Schema,

@@ -36,6 +36,9 @@ type Recording = {
   parts: Part[];
   /** What the running live session heard so far, saved as it comes in */
   current?: Part;
+  /** Milliseconds spent paused, so the timer leaves them out */
+  pausedFor?: number;
+  pausedAt?: number;
 };
 
 // Another app holding the microphone this long is most likely a call, not a short voice note
@@ -52,7 +55,8 @@ const osascript = (script: string) =>
 const banner = (text: string) =>
   osascript(`display notification ${JSON.stringify(text)} with title "Voz"`);
 
-async function confirmRecording() {
+// Voz before API 8 has no voz.ask, so it gets a dialog instead of the card under the notch
+async function confirmInDialog() {
   const run = osascript(
     'display dialog "A meeting seems to have started. Record it?" with title "Voz" buttons {"Not now", "Record"} default button "Record" cancel button "Not now" giving up after 60',
   );
@@ -68,6 +72,10 @@ const isRunning = (pid: number) => {
   } catch {
     return false;
   }
+};
+
+const signal = (pid: number, name: NodeJS.Signals) => {
+  if (isRunning(pid)) process.kill(pid, name);
 };
 
 const copy = (text: string) =>
@@ -141,16 +149,42 @@ export default defineExtension((voz) => {
       };
       save(recording);
     }
+    // A reload can't bring the pause back, so the meeting goes on recording
+    if (recording.pausedAt) recording = resumed(recording);
     activity = voz.startActivity({
       title: "Recording meeting",
-      since: recording.started,
+      since: recording.started + (recording.pausedFor ?? 0),
       stop,
       open: openNotes,
+      pause,
+      resume,
     });
     button?.update({ hidden: true });
     listen(activity, recording).catch((error) =>
       console.log(`Live transcription stopped trying: ${error}`),
     );
+  }
+
+  function resumed(recording: Recording): Recording {
+    signal(recording.pid, "SIGUSR2");
+    const pausedFor =
+      (recording.pausedFor ?? 0) +
+      Date.now() -
+      (recording.pausedAt ?? Date.now());
+    const next = { ...recording, pausedFor, pausedAt: undefined };
+    save(next);
+    return next;
+  }
+
+  function pause() {
+    if (!existsSync(statePath)) return;
+    const recording = read();
+    signal(recording.pid, "SIGUSR1");
+    save({ ...recording, pausedAt: Date.now() });
+  }
+
+  function resume() {
+    if (existsSync(statePath)) resumed(read());
   }
 
   async function listen(current: RunningActivity, recording: Recording) {
@@ -249,7 +283,7 @@ export default defineExtension((voz) => {
     const recording = await finishLive(started);
     rmSync(statePath);
     button?.update({ hidden: false });
-    if (isRunning(recording.pid)) process.kill(recording.pid, "SIGTERM");
+    signal(recording.pid, "SIGTERM");
     const saving = voz.startActivity({ title: "Saving meeting" });
     try {
       const path = await write(recording, ctx);
@@ -336,8 +370,15 @@ export default defineExtension((voz) => {
   let timer: Timer | undefined;
   async function suggest() {
     if (existsSync(statePath)) return;
-    if ((await confirmRecording()) && busy && !existsSync(statePath))
-      await start(banner);
+    const record = voz.ask
+      ? (
+          await voz.ask({
+            title: "A meeting seems to have started. Record it?",
+            buttons: ["Not now", "Record"],
+          })
+        )?.button === "Record"
+      : await confirmInDialog();
+    if (record && busy && !existsSync(statePath)) await start(banner);
   }
   async function watchMicrophone() {
     const watcher = Bun.spawn([recorder, "--watch"], {

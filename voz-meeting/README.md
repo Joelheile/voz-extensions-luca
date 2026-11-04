@@ -2,7 +2,7 @@
 
 A [Voz](https://github.com/Joelheile/voz) extension that records meetings. Press the hotkey to start, press it again to stop. Voz transcribes your microphone and everything your Mac plays, such as Zoom, Meet or Teams, live and on your Mac.
 
-While a meeting records, the notch shows the time and the sound Voz hears. Under it, the last two lines of the live transcript show that everything works. When Voz can't hear the meeting, both turn orange while it reconnects. Point at the transcript to open your notes, click to type what matters to you, and switch back to the call to shrink them again. The notes style Markdown: `# heading`, `- list`, `- [ ] to-do`, `**bold**`.
+While a meeting records, the notch shows the time and the sound Voz hears. Under it, the last two lines of the live transcript show that everything works. When Voz can't hear the meeting, both turn orange while it reconnects. Point at the notch to pause or stop, and at the transcript to open your notes, click to type what matters to you, and switch back to the call to shrink them again. The notes style Markdown: `# heading`, `- list`, `- [ ] to-do`, `**bold**`.
 
 When you stop, Voz writes a summary on your Mac with Apple's on-device model. Your notes are the outline: Voz keeps every point you wrote, adds what was said about it, and lists the to-dos. The summary opens in a notes window, and your edits go into the file.
 
@@ -53,7 +53,7 @@ The meeting also lands in your Voz history. Hover it to copy the summary, your n
 voz install voz-meeting
 ```
 
-Needs Voz with extension API 6, a Parakeet speech model picked in Settings, and Apple Silicon. Summaries need Apple Intelligence. Telling your voice apart from the call needs Voz with API 8. macOS asks Voz for system audio access on the first recording.
+Needs Voz with extension API 6, a Parakeet speech model picked in Settings, and Apple Silicon. Summaries need Apple Intelligence. Telling your voice apart from the call, pausing, and asking under the notch instead of in a dialog need Voz with API 8. macOS asks Voz for system audio access on the first recording.
 
 ## Settings
 

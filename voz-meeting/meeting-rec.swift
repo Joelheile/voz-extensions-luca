@@ -1,4 +1,5 @@
 // Records the microphone and all system audio until SIGINT or SIGTERM, then mixes both into one 16 kHz mono m4a.
+// SIGUSR1 pauses both tracks and SIGUSR2 resumes them, so nothing said while paused reaches the file.
 // usage: meeting-rec <out.m4a> | meeting-rec --watch
 import AVFoundation
 import CoreAudio
@@ -109,12 +110,14 @@ let output = URL(fileURLWithPath: arguments[1])
 let micURL = output.appendingPathExtension("mic.caf")
 let systemURL = output.appendingPathExtension("system.caf")
 
+var paused = false
+
 let engine = AVAudioEngine()
 let micFormat = engine.inputNode.outputFormat(forBus: 0)
 var micFile: AVAudioFile? = try? AVAudioFile(forWriting: micURL, settings: micFormat.settings)
 guard micFile != nil else { fail("Cannot write \(micURL.path)") }
 engine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: micFormat) { buffer, _ in
-  try? micFile?.write(from: buffer)
+  if !paused { try? micFile?.write(from: buffer) }
 }
 
 let tapDescription = CATapDescription(stereoGlobalTapButExcludeProcesses: [])
@@ -146,7 +149,7 @@ guard systemFile != nil else { fail("Cannot write \(systemURL.path)") }
 
 var procID: AudioDeviceIOProcID?
 check(AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, DispatchQueue(label: "meeting-rec")) { _, input, _, _, _ in
-  guard let buffer = AVAudioPCMBuffer(pcmFormat: systemFormat, bufferListNoCopy: input, deallocator: nil) else { return }
+  guard !paused, let buffer = AVAudioPCMBuffer(pcmFormat: systemFormat, bufferListNoCopy: input, deallocator: nil) else { return }
   try? systemFile?.write(from: buffer)
 }, "Creating the IO proc")
 
@@ -171,10 +174,11 @@ func stop() {
 }
 
 var sources: [DispatchSourceSignal] = []
-for signalNumber in [SIGINT, SIGTERM] {
+let handlers: [Int32: () -> Void] = [SIGINT: stop, SIGTERM: stop, SIGUSR1: { paused = true }, SIGUSR2: { paused = false }]
+for (signalNumber, handler) in handlers {
   signal(signalNumber, SIG_IGN)
   let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
-  source.setEventHandler(handler: stop)
+  source.setEventHandler(handler: handler)
   source.resume()
   sources.append(source)
 }
