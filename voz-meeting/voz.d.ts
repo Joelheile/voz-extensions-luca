@@ -97,6 +97,10 @@ export type AskField =
 /** The last button is the main one. */
 export type AskOptions = {
   title: string;
+  /** A line under the title */
+  message?: string;
+  /** A Lucide icon name, such as `"audio-lines"`, shown beside the title */
+  icon?: string;
   fields?: AskField[];
   buttons: string[];
 };
@@ -210,18 +214,15 @@ export type Activity = {
 
 export type RunningActivity = {
   end(): void;
+  /** Stops the activity as if the user pressed Stop, so its `stop` handler runs with a `ctx` */
+  stop(): void;
   /** Listens until `stop()` or until the activity ends. */
   transcribeLive(options?: LiveTranscribeOptions): Promise<LiveTranscription>;
 };
 
 /** Another part of an entry the user can copy on its own, such as a meeting's notes. */
 export type HistoryCopy = { name: string; text: string };
-export type HistoryEntry = {
-  text: string;
-  seconds?: number;
-  file?: string;
-  copies?: HistoryCopy[];
-};
+export type HistoryEntry = { text: string; seconds?: number; file?: string; copies?: HistoryCopy[] };
 
 type SettingBase = { title: string; description?: string };
 
@@ -282,8 +283,9 @@ export type ExtensionAPI = {
   registerAction(action: Action): ActionHandle;
   registerTool<const S extends ObjectSchema>(tool: Tool<S>): void;
   startActivity(activity: Activity): RunningActivity;
-  /** Like `ctx.ask`, for moments no handler runs, such as when a meeting starts */
+  /** Like `ctx.ask` and `ctx.openNote`, for moments no handler runs, such as when a meeting starts */
   ask(options: AskOptions): Promise<Answer>;
+  openNote(note: NoteOptions): Note;
   addHistory(entry: HistoryEntry): void;
   settings<Schema extends SettingsSchema>(
     schema: Schema,

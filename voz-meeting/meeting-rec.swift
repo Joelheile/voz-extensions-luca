@@ -73,37 +73,41 @@ func mix(_ first: URL, _ second: URL, into output: URL) {
 }
 
 let arguments = CommandLine.arguments
-// `meeting-rec --watch` prints 1 or 0 whenever any app starts or stops using the default microphone, until stdin closes
+// `meeting-rec --watch` prints the bundle IDs of the apps using a microphone, comma-separated, whenever they change, until stdin closes
 if arguments.count == 2, arguments[1] == "--watch" {
-  let system = AudioObjectID(kAudioObjectSystemObject)
-  let queue = DispatchQueue(label: "meeting-rec")
-  var running = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-  var defaultInput = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-  var device = AudioObjectID(kAudioObjectUnknown)
-  var last = ""
-  let emit = {
-    var value: UInt32 = 0
-    var size = UInt32(MemoryLayout<UInt32>.size)
-    let line = AudioObjectGetPropertyData(device, &running, 0, nil, &size, &value) == noErr && value != 0 ? "1\n" : "0\n"
-    if line != last { FileHandle.standardOutput.write(line.data(using: .utf8)!) }
-    last = line
+  // Apps quit between listing and reading, so a failed read means the app is gone
+  func read<T>(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ initial: T) -> T? {
+    var address = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var value = initial
+    var size = UInt32(MemoryLayout<T>.size)
+    return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr ? value : nil
   }
-  let report: AudioObjectPropertyListenerBlock = { _, _ in emit() }
-  // Follow the default microphone when it changes, such as when AirPods connect
-  let follow = {
-    if device != kAudioObjectUnknown { AudioObjectRemovePropertyListenerBlock(device, &running, queue, report) }
-    device = property(system, kAudioHardwarePropertyDefaultInputDevice, AudioObjectID(kAudioObjectUnknown))
-    if device != kAudioObjectUnknown { AudioObjectAddPropertyListenerBlock(device, &running, queue, report) }
-    emit()
+  func listening() -> String {
+    let system = AudioObjectID(kAudioObjectSystemObject)
+    var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(system, &address, 0, nil, &size) == noErr else { return "" }
+    var processes = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
+    guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &processes) == noErr else { return "" }
+    let apps = processes.compactMap { process -> String? in
+      guard read(process, kAudioProcessPropertyIsRunningInput, UInt32(0)) == 1 else { return nil }
+      return read(process, kAudioProcessPropertyBundleID, "" as CFString).map { $0 as String }
+    }
+    return Set(apps.filter { !$0.isEmpty }).sorted().joined(separator: ",")
   }
-  check(AudioObjectAddPropertyListenerBlock(system, &defaultInput, queue) { _, _ in follow() }, "Watching the default microphone")
-  queue.async(execute: follow)
+  var last: String?
+  // Polling stays simple and costs little next to following every process that comes and goes
+  Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { _ in
+    let apps = listening()
+    if apps != last { FileHandle.standardOutput.write((apps + "\n").data(using: .utf8)!) }
+    last = apps
+  }.fire()
   // Voz restarting extensions closes stdin, so the watcher never outlives them
   Thread {
     while readLine() != nil {}
     exit(0)
   }.start()
-  dispatchMain()
+  RunLoop.main.run()
 }
 guard arguments.count == 2 else { fail("usage: meeting-rec <out.m4a>") }
 let output = URL(fileURLWithPath: arguments[1])

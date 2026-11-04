@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import type { Transcript } from "voz";
 import { enhance, lines, render, split } from "./enhance";
-import { meetingFile, merge, shift, transcriptMarkdown } from "./meeting";
+import {
+  callAppsIn,
+  isMeetingUrl,
+  meetingFiles,
+  merge,
+  shift,
+  transcriptMarkdown,
+} from "./meeting";
 
 const transcript = (turns: Transcript["turns"]): Transcript => ({
   text: turns.map((turn) => turn.text).join(" "),
@@ -29,15 +36,28 @@ describe("meeting", () => {
     );
   });
 
-  test("leaves out empty sections", () => {
-    const file = meetingFile({
+  test("names the folder after the meeting and leaves out empty files", () => {
+    const meeting = {
       title: "",
       date: new Date(2026, 10, 3, 9, 30),
       summary: "",
       notes: "ship fri",
       transcript: "",
+    };
+    expect(meetingFiles(meeting)).toEqual({
+      folder: "2026-11-03 Meeting 0930",
+      files: [["Notes.md", "# Notes\n\nship fri\n"]],
     });
-    expect(file).toBe("# Meeting 2026-11-03 09:30\n\n## Notes\n\nship fri\n");
+    const titled = meetingFiles({
+      ...meeting,
+      title: "Q4/Q1: pricing",
+      summary: "- Raise it",
+    });
+    expect(titled.folder).toBe("2026-11-03 Q4-Q1- pricing");
+    expect(titled.files[0]).toEqual([
+      "Summary.md",
+      "# Q4/Q1: pricing\n\n- Raise it\n",
+    ]);
   });
 });
 
@@ -101,5 +121,52 @@ describe("enhance", () => {
       markdown:
         "### Ship Friday\n- Milan owns the changelog\n\n### To-dos\n- [ ] Milan: changelog",
     });
+  });
+});
+
+describe("callAppsIn", () => {
+  const names = (listening: string) =>
+    callAppsIn(listening).map((app) => app.name);
+
+  test("names the call apps among the apps using a microphone", () => {
+    expect(names("com.apple.CoreSpeech,us.zoom.xos")).toEqual(["Zoom"]);
+    expect(names("com.google.Chrome.helper,com.google.Chrome")).toEqual([
+      "Google Chrome",
+    ]);
+    expect(names("COM.HNC.DISCORD,company.thebrowser.Browser")).toEqual([
+      "Discord",
+      "Arc",
+    ]);
+  });
+
+  test("ignores dictation, Siri and nothing at all", () => {
+    expect(names("com.joelheile.voz,com.apple.CoreSpeech")).toEqual([]);
+    expect(names("")).toEqual([]);
+  });
+
+  test("reads tabs only for browsers", () => {
+    expect(callAppsIn("com.apple.WebKit.GPU")[0]?.tabs).toBe(
+      "com.apple.Safari",
+    );
+    expect(callAppsIn("us.zoom.xos")[0]?.tabs).toBeUndefined();
+  });
+});
+
+describe("isMeetingUrl", () => {
+  test("knows calls in the browser", () => {
+    expect(
+      isMeetingUrl("https://meet.google.com/abc-defg-hij?authuser=0"),
+    ).toBe(true);
+    expect(isMeetingUrl("https://teams.microsoft.com/v2/")).toBe(true);
+    expect(isMeetingUrl("https://app.zoom.us/wc/123456789/join")).toBe(true);
+    expect(isMeetingUrl("https://whereby.com/team-sync")).toBe(true);
+    expect(isMeetingUrl("https://meet.jit.si/standup")).toBe(true);
+  });
+
+  test("ignores home pages and other sites", () => {
+    expect(isMeetingUrl("https://meet.google.com/landing")).toBe(false);
+    expect(isMeetingUrl("https://zoom.us/pricing")).toBe(false);
+    expect(isMeetingUrl("https://whereby.com/")).toBe(false);
+    expect(isMeetingUrl("https://www.youtube.com/watch?v=meet")).toBe(false);
   });
 });

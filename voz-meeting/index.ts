@@ -3,6 +3,7 @@ import {
   type ActionHandle,
   type Context,
   type LiveTranscription,
+  type Note,
   type RunningActivity,
   type Transcript,
 } from "voz";
@@ -10,6 +11,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -17,9 +19,13 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { enhance } from "./enhance";
 import {
-  meetingFile,
+  callAppsIn,
+  isMeetingUrl,
+  type CallApp,
+  meetingFiles,
   merge,
   shift,
+  summaryFile,
   transcriptMarkdown,
   type Part,
 } from "./meeting";
@@ -41,8 +47,14 @@ type Recording = {
   pausedAt?: number;
 };
 
-// Another app holding the microphone this long is most likely a call, not a short voice note
-const suggestAfter = 20_000;
+// A call app holding the microphone this long has joined a call, not just tested it
+const suggestAfter = 3_000;
+// How often a browser using the microphone gets its tabs read, until one is on a meeting
+const tabsEvery = 5_000;
+// Asks about the same app once in this window, so a dropped call that rejoins stays quiet
+const cooldown = 10 * 60_000;
+// The call app that started a recording has let go of the microphone this long when the call ended
+const endedAfter = 15_000;
 // Waits between attempts to start live transcription. The last ones skip system audio, so the microphone still gets transcribed.
 const retries = [0, 2_000, 5_000, 15_000, 30_000];
 const micOnlyFrom = 3;
@@ -132,8 +144,10 @@ export default defineExtension((voz) => {
     | { transcription?: LiveTranscription; latest?: Transcript; offset: number }
     | undefined;
 
-  function openNotes(ctx: Context) {
-    ctx.openNote({
+  // A meeting started from the card has no ctx, and Voz before API 8 has no voz.openNote
+  let notes: Note | undefined;
+  function openNotes(ctx?: Context) {
+    notes = (ctx ?? voz).openNote?.({
       title: "Meeting notes",
       text: existsSync(statePath) ? read().notes : "",
       onChange: (notes) => existsSync(statePath) && save({ ...read(), notes }),
@@ -250,7 +264,7 @@ export default defineExtension((voz) => {
       };
       save(recording);
       showRecording(recording);
-      if (ctx) openNotes(ctx);
+      openNotes(ctx);
     });
   }
 
@@ -278,14 +292,20 @@ export default defineExtension((voz) => {
   async function stop(ctx: Context) {
     if (!existsSync(statePath)) return;
     const started = read();
+    // Saving starts before recording ends, so the notch never empties between them
+    const saving = voz.startActivity({ title: "Saving meeting" });
     activity?.end();
     activity = undefined;
-    const recording = await finishLive(started);
-    rmSync(statePath);
-    button?.update({ hidden: false });
-    signal(recording.pid, "SIGTERM");
-    const saving = voz.startActivity({ title: "Saving meeting" });
+    notes?.close();
+    notes = undefined;
+    recordedFrom = undefined;
+    clearTimeout(ending);
+    ending = undefined;
     try {
+      const recording = await finishLive(started);
+      rmSync(statePath);
+      button?.update({ hidden: false });
+      signal(recording.pid, "SIGTERM");
       const path = await write(recording, ctx);
       ctx.notify(`Saved ${path.split("/").pop()}`);
     } catch (error) {
@@ -312,16 +332,20 @@ export default defineExtension((voz) => {
       );
     }
     const transcriptText = transcriptMarkdown(transcript);
-    const path = join(folder, `${recording.name}.md`);
-    const render = (markdown: string) =>
-      meetingFile({
-        title: summary.title,
-        date: new Date(recording.started),
-        summary: markdown,
-        notes,
-        transcript: transcriptText,
-      });
-    writeFileSync(path, render(summary.markdown));
+    const meeting = meetingFiles({
+      title: summary.title,
+      date: new Date(recording.started),
+      summary: summary.markdown,
+      notes,
+      transcript: transcriptText,
+    });
+    let path = join(folder, meeting.folder);
+    for (let copy = 2; existsSync(path); copy++)
+      path = join(folder, `${meeting.folder} ${copy}`);
+    mkdirSync(path);
+    for (const [name, text] of meeting.files)
+      writeFileSync(join(path, name), text);
+    await moveAudio(recording, path);
     const main = summary.markdown || notes || transcriptText;
     const copies = [
       { name: "Notes", text: notes },
@@ -341,15 +365,29 @@ export default defineExtension((voz) => {
       ctx.openNote({
         title: summary.title || "Summary",
         text: summary.markdown,
-        onChange: (markdown) => writeFileSync(path, render(markdown)),
+        onChange: (markdown) =>
+          writeFileSync(
+            join(path, "Summary.md"),
+            summaryFile(summary.title, markdown),
+          ),
       });
     }
     return path;
   }
 
-  async function fromAudio(recording: Recording, ctx: Context) {
-    // The recorder mixes both tracks after it stops, which takes a few seconds for long meetings
+  // The recorder mixes both tracks after it stops, which takes a few seconds for long meetings
+  async function recorded(recording: Recording) {
     while (isRunning(recording.pid)) await Bun.sleep(250);
+  }
+
+  async function moveAudio(recording: Recording, into: string) {
+    await recorded(recording);
+    if (existsSync(recording.audio))
+      renameSync(recording.audio, join(into, "Recording.m4a"));
+  }
+
+  async function fromAudio(recording: Recording, ctx: Context) {
+    await recorded(recording);
     if (!existsSync(recording.audio)) throw new Error("No recording");
     return ctx.transcribe(recording.audio, { speakers: true });
   }
@@ -365,21 +403,92 @@ export default defineExtension((voz) => {
   // Voz ends activities when it reloads extensions. The recording keeps running, and what live transcription heard is kept.
   if (existsSync(statePath)) showRecording(read());
 
-  // Asks once each time the microphone becomes busy, so declining or stopping early does not ask again until the call ends
-  let busy = false;
-  let timer: Timer | undefined;
-  async function suggest() {
-    if (existsSync(statePath)) return;
+  const calls = new Map<string, Timer>();
+  const asked = new Map<string, number>();
+  let recordedFrom: string | undefined;
+  let ending: Timer | undefined;
+
+  async function onMeetingTab(browser: string) {
+    const urls = await new Response(
+      osascript(
+        `if application id "${browser}" is running then tell application id "${browser}" to get URL of every tab of every window`,
+      ).stdout,
+    ).text();
+    return (urls.match(/https?:\/\/[^\s,{}]+/g) ?? []).some(isMeetingUrl);
+  }
+
+  async function suggest(app: CallApp) {
+    if (!calls.has(app.name) || existsSync(statePath)) return;
+    if (Date.now() - (asked.get(app.name) ?? 0) < cooldown) return;
+    if (app.tabs && !(await onMeetingTab(app.tabs))) {
+      if (calls.has(app.name))
+        calls.set(
+          app.name,
+          setTimeout(() => suggest(app), tabsEvery),
+        );
+      return;
+    }
+    asked.set(app.name, Date.now());
     const record = voz.ask
       ? (
           await voz.ask({
-            title: "A meeting seems to have started. Record it?",
+            title: `${app.name} call started`,
+            message: "Record the meeting and take notes?",
+            icon: "audio-lines",
             buttons: ["Not now", "Record"],
           })
         )?.button === "Record"
       : await confirmInDialog();
-    if (record && busy && !existsSync(statePath)) await start(banner);
+    if (!record || !calls.has(app.name) || existsSync(statePath)) return;
+    recordedFrom = app.name;
+    await start(banner);
   }
+
+  async function offerStop(app: string) {
+    if (recordedFrom !== app || calls.has(app) || !voz.ask) return;
+    const answer = await voz.ask({
+      title: `${app} call ended`,
+      message: "Stop recording and save the meeting?",
+      icon: "audio-lines",
+      buttons: ["Keep recording", "Stop"],
+    });
+    if (answer?.button === "Stop" && recordedFrom === app && !calls.has(app))
+      activity?.stop?.();
+  }
+
+  function heard(listening: string) {
+    const now = new Map(callAppsIn(listening).map((app) => [app.name, app]));
+    for (const [name, timer] of calls)
+      if (!now.has(name)) {
+        clearTimeout(timer);
+        calls.delete(name);
+      }
+    for (const [name, app] of now)
+      if (!calls.has(name))
+        calls.set(
+          name,
+          setTimeout(
+            () =>
+              suggest(app).catch((error) =>
+                console.log(`Meeting suggestion failed: ${error}`),
+              ),
+            suggestAfter,
+          ),
+        );
+    if (!recordedFrom || calls.has(recordedFrom)) {
+      clearTimeout(ending);
+      ending = undefined;
+    } else if (!ending) {
+      const app = recordedFrom;
+      ending = setTimeout(() => {
+        ending = undefined;
+        offerStop(app).catch((error) =>
+          console.log(`Offering to stop failed: ${error}`),
+        );
+      }, endedAfter);
+    }
+  }
+
   async function watchMicrophone() {
     const watcher = Bun.spawn([recorder, "--watch"], {
       stdin: "pipe",
@@ -388,20 +497,8 @@ export default defineExtension((voz) => {
     });
     for await (const chunk of watcher.stdout.pipeThrough(
       new TextDecoderStream(),
-    )) {
-      const next = chunk.trim().endsWith("1");
-      if (next === busy) continue;
-      busy = next;
-      clearTimeout(timer);
-      if (busy)
-        timer = setTimeout(
-          () =>
-            suggest().catch((error) =>
-              console.log(`Meeting suggestion failed: ${error}`),
-            ),
-          suggestAfter,
-        );
-    }
+    ))
+      heard(chunk.trim().split("\n").at(-1) ?? "");
     console.log(
       `Meeting detection stopped: ${await new Response(watcher.stderr).text()}`,
     );
